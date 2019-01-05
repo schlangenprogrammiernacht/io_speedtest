@@ -12,16 +12,25 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#include <sys/mman.h>
+#include <fcntl.h>
+
 #include "Stopwatch.h"
 
 #define PIPE_READ 0
 #define PIPE_WRITE 1
 
+struct SHMSetupMsg {
+	char shm_name[32];
+	size_t shm_size;
+};
+
+
 struct JobInfo
 {
-	int shm_id;
 	size_t num_integers;
 };
+
 
 /*
  * Thanks to https://stackoverflow.com/a/12839498 for the basis of this function
@@ -131,27 +140,31 @@ int main(void)
 	JobInfo ji;
 	ji.num_integers = 250000;
 
+	// create setup message
+	SHMSetupMsg setupMsg;
+	strncpy(setupMsg.shm_name, "/shm_test", sizeof(setupMsg.shm_name));
+	setupMsg.shm_size = sizeof(int)*ji.num_integers;
+
 	// create a shared memory block of the given size
-	ji.shm_id = shmget(IPC_PRIVATE, sizeof(int)*ji.num_integers, IPC_CREAT | 0666);
-	if(ji.shm_id == -1) {
-		std::cerr << "[master] shmget() failed: " << strerror(errno) << std::endl;
+	int shm_fd = shm_open(setupMsg.shm_name, O_RDWR | O_CREAT, 0600);
+	if(shm_fd == -1) {
+		std::cerr << "[master] shm_open() failed: " << strerror(errno) << std::endl;
 		return 1;
 	}
 
-	void *shared_mem = shmat(ji.shm_id, NULL, 0);
+	ret = ftruncate(shm_fd, setupMsg.shm_size);
+	if(ret == -1) {
+		std::cerr << "[master] ftruncate() failed: " << strerror(errno) << std::endl;
+		return 1;
+	}
+
+	void *shared_mem = mmap(NULL, setupMsg.shm_size, PROT_WRITE, MAP_SHARED, shm_fd, 0);
 	if(shared_mem == (void*)-1) {
-		std::cerr << "[master] shmat() failed: " << strerror(errno) << std::endl;
+		std::cerr << "[master] mmap() failed: " << strerror(errno) << std::endl;
 		return 1;
 	}
 
 	int *shared_ints = reinterpret_cast<int*>(shared_mem);
-
-	// mark shm as to-be-destroyed (will actually be destroyed if no more processes are attached)
-	ret = shmctl(ji.shm_id, IPC_RMID, NULL);
-	if(ret == -1) {
-		std::cerr << "[master] shmctl(IPC_RMID) failed: " << strerror(errno) << std::endl;
-		return 1;
-	}
 
 	for(size_t i = 0; i < ji.num_integers; i++) {
 		shared_ints[i] = i+1;
@@ -159,6 +172,16 @@ int main(void)
 
 	uint64_t total_time = 0;
 	size_t i;
+
+	// send setup message
+	ret = write(siPipe, &setupMsg, sizeof(setupMsg));
+	if(ret == -1) {
+		std::cerr << "[master] write() failed: " << strerror(errno) << std::endl;
+		return 1;
+	} else if(ret != sizeof(setupMsg)) {
+		std::cerr << "[master] Could not write setup message to worker’s STDIN (" << ret << " bytes written), shutting down with error" << std::endl;
+		return 1;
+	}
 
 	// make some rounds
 	for(i = 0; i < 10000; i++) {
@@ -205,4 +228,19 @@ int main(void)
 	int exitStatus;
 	pid_t exitPID = wait(&exitStatus);
 	std::cerr << "[master] Process with PID " << exitPID << " terminated with code " << WEXITSTATUS(exitStatus) << std::endl;
+
+	// shared memory teardown
+	std::cerr << "[master] Shutting down shared memory" << std::endl;
+
+	ret = munmap(shared_mem, setupMsg.shm_size);
+	if(ret == -1) {
+		std::cerr << "[master] munmap() failed: " << strerror(errno) << std::endl;
+		return 1;
+	}
+
+	ret = shm_unlink(setupMsg.shm_name);
+	if(ret == -1) {
+		std::cerr << "[master] shm_unlink() failed: " << strerror(errno) << std::endl;
+		return 1;
+	}
 }

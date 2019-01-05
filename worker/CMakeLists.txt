@@ -15,10 +15,7 @@ add_executable(
 	${sources}
 	)
 
-#target_link_libraries(
-#	${CMAKE_PROJECT_NAME}
-#	tcpserver
-#	${LUA_LIB}
-#	Threads::Threads
-#	mysqlcppconn
-#)
+target_link_libraries(
+	worker
+	rt
+)
