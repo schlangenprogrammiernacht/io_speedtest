@@ -19,7 +19,6 @@ struct SHMSetupMsg {
 
 struct JobInfo
 {
-	char shm_name[32];
 	size_t num_integers;
 };
 
@@ -76,7 +75,7 @@ int main(void)
 
 		// calculate
 		int sum = 0;
-		for(size_t i = 0; i < 5 /*ji.num_integers*/; i++) {
+		for(size_t i = 0; i < ji.num_integers; i++) {
 			sum += shared_ints[i];
 		}
 

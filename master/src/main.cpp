@@ -219,7 +219,9 @@ int main(void)
 		total_time += stw.GetMonotonicTimeNs();
 	}
 
-	std::cerr << "[master] average round time: " << (total_time/i) << " ns wall time" << std::endl;
+	if(i > 0) {
+		std::cerr << "[master] average round trip time: " << (total_time/i) << " ns wall time" << std::endl;
+	}
 
 	// finished sending
 	close(siPipe);
